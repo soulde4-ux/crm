@@ -1,11 +1,16 @@
-export type Route = 'workflow'|'pricing'|'templates'|'forms'|'settings'|'audit'|'onboard'
+// Minimal router for the popup app. Keep small and framework-agnostic so it can
+// be replaced later with react-router or similar if needed.
 
-export function navigate(route: Route) {
-  window.location.hash = `#/${route}`
+export type Route = 'home' | 'addons';
+
+export const ROUTES: Route[] = ['home', 'addons'];
+
+export function isRoute(value: string): value is Route {
+  return (ROUTES as string[]).includes(value);
 }
 
-export function currentRoute(): Route {
-  const r = location.hash.replace('#/', '') as Route
-  if (!r) return 'workflow'
-  return r
+export function normalizeRoute(maybe: string | undefined): Route {
+  if (!maybe) return 'home';
+  if (isRoute(maybe)) return maybe;
+  return 'home';
 }
