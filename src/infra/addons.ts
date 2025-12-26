@@ -1,24 +1,43 @@
-export type Addon = {
-  id: string;
-  name: string;
-  description?: string;
-  icon?: string;
-  init?: () => void | Promise<void>;
+// Addons config helpers that use chrome.storage.local
+// Provides getAddonsConfig and setAddonsConfig
+
+export type AddonsConfig = {
+  // keyed by addon id
+  [id: string]: any;
 };
 
-// Loads local addons that live in src/addons/index.ts
-// This uses a dynamic import so local development addons can be dropped in without
-// changing the infra code.
-export async function loadLocalAddons(): Promise<Addon[]> {
-  try {
-    // src/infra is sibling to src/addons, so import '../addons'
-    const module = await import('../addons');
-    // Support both `export default [...]` and `export const addons = [...]` shapes
-    const addons: Addon[] = module.default ?? module.addons ?? [];
-    return Array.isArray(addons) ? addons : [];
-  } catch (e) {
-    // If the file doesn't exist or fails to load, return an empty list.
-    console.warn('[infra/addons] could not load local addons', e);
-    return [];
-  }
+export function getAddonsConfig(): Promise<AddonsConfig> {
+  return new Promise((resolve, reject) => {
+    try {
+      if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) {
+        // Fallback to localStorage for non-extension dev environments
+        const raw = localStorage.getItem('addons_config');
+        resolve(raw ? JSON.parse(raw) : {});
+        return;
+      }
+      chrome.storage.local.get(['addons_config'], (res) => {
+        const cfg = (res && res.addons_config) ? res.addons_config : {};
+        resolve(cfg);
+      });
+    } catch (e) {
+      reject(e);
+    }
+  });
 }
+
+export function setAddonsConfig(cfg: AddonsConfig): Promise<void> {
+  return new Promise((resolve, reject) => {
+    try {
+      if (typeof chrome === 'undefined' || !chrome.storage || !chrome.storage.local) {
+        localStorage.setItem('addons_config', JSON.stringify(cfg));
+        resolve();
+        return;
+      }
+      chrome.storage.local.set({ addons_config: cfg }, () => resolve());
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
+export default { getAddonsConfig, setAddonsConfig };

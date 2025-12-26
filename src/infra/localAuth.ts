@@ -1,100 +1,113 @@
-// src/infra/localAuth.ts
-// Local-only authentication helper (dev/demo).
-// - Bootstraps two users on first run:
-//     user / password: "user"     -> role: "user"
-//     admin / password: "Soulenchanter#3" -> role: "admin"
-// - Stores only password hashes and session info in chrome.storage.local
-// - Uses Web Crypto SubtleCrypto SHA-256 to compute hex digest
+// Minimal local auth helper for extension UI
+// - No auto-creation of admin on first-run
+// - Provides createAdmin(username, password)
+// - Bootstraps a dev-only default user when running in development
 
-type StoredUser = {
-  username: string
-  passwordHash: string
-  role: 'user' | 'admin' | string
-  createdAt: string
+export type User = {
+  username: string;
+  passwordHash: string; // simple placeholder; in real app use proper hashing
+  isAdmin?: boolean;
+};
+
+const USERS_KEY = 'local_auth_users';
+
+function readUsers(): User[] {
+  try {
+    const raw = localStorage.getItem(USERS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    console.warn('failed to read users', e);
+    return [];
+  }
 }
 
-type UsersMap = Record<string, StoredUser>
-
-const USERS_KEY = 'localAuth_users'
-const SESSION_KEY = 'localAuth_session'
-
-/** Hex-encode an ArrayBuffer */
-function bufToHex(buffer: ArrayBuffer) {
-  const bytes = new Uint8Array(buffer)
-  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
+function writeUsers(users: User[]) {
+  localStorage.setItem(USERS_KEY, JSON.stringify(users));
 }
 
-/** Hash password with SHA-256 and return hex string */
-export async function hashPassword(password: string): Promise<string> {
-  const enc = new TextEncoder()
-  const data = enc.encode(password)
-  const digest = await crypto.subtle.digest('SHA-256', data)
-  return bufToHex(digest)
+function simpleHash(password: string) {
+  // NOT SECURE: placeholder for local/dev use only
+  let h = 0;
+  for (let i = 0; i < password.length; i++) {
+    h = (h << 5) - h + password.charCodeAt(i);
+    h |= 0;
+  }
+  return String(h);
 }
 
-/** Initialize default users on first run (idempotent) */
-export async function initializeDefaultUsers(): Promise<void> {
-  return new Promise((resolve) => {
-    try {
-      chrome.storage.local.get([USERS_KEY], async (res: any) => {
-        if (res && res[USERS_KEY]) return resolve()
-        // Bootstrap default users (hash at runtime)
-        const userHash = await hashPassword('user')
-        const adminHash = await hashPassword('Soulenchanter#3')
-        const now = new Date().toISOString()
-        const users: UsersMap = {
-          user: { username: 'user', passwordHash: userHash, role: 'user', createdAt: now },
-          admin: { username: 'admin', passwordHash: adminHash, role: 'admin', createdAt: now }
-        }
-        chrome.storage.local.set({ [USERS_KEY]: users }, () => resolve())
-      })
-    } catch (err) {
-      // non-extension dev environment: ignore
-      resolve()
-    }
-  })
-}
-
-/** Attempt to login. Returns user object (without passwordHash) on success, or throws */
-export async function login(username: string, password: string): Promise<{ username: string; role: string }> {
-  const hash = await hashPassword(password)
+export function createAdmin(username: string, password: string): Promise<User> {
   return new Promise((resolve, reject) => {
-    try {
-      chrome.storage.local.get([USERS_KEY], (res: any) => {
-        const users: UsersMap = (res && res[USERS_KEY]) || {}
-        const u = users[username]
-        if (!u) return reject(new Error('Invalid credentials'))
-        if (u.passwordHash !== hash) return reject(new Error('Invalid credentials'))
-        const session = { username: u.username, role: u.role, loggedAt: new Date().toISOString() }
-        chrome.storage.local.set({ [SESSION_KEY]: session }, () => resolve({ username: u.username, role: u.role }))
-      })
-    } catch (err) {
-      reject(err)
-    }
-  })
+    if (!username || !password) return reject(new Error('username and password required'));
+    const users = readUsers();
+    if (users.find(u => u.username === username)) return reject(new Error('user already exists'));
+    const user: User = { username, passwordHash: simpleHash(password), isAdmin: true };
+    users.push(user);
+    writeUsers(users);
+    resolve(user);
+  });
 }
 
-/** Logout current session */
-export async function logout(): Promise<void> {
-  return new Promise((resolve) => {
-    try {
-      chrome.storage.local.remove([SESSION_KEY], () => resolve())
-    } catch (err) {
-      resolve()
-    }
-  })
+export function createUser(username: string, password: string, isAdmin = false): Promise<User> {
+  return new Promise((resolve, reject) => {
+    if (!username || !password) return reject(new Error('username and password required'));
+    const users = readUsers();
+    if (users.find(u => u.username === username)) return reject(new Error('user already exists'));
+    const user: User = { username, passwordHash: simpleHash(password), isAdmin };
+    users.push(user);
+    writeUsers(users);
+    resolve(user);
+  });
 }
 
-/** Get current session (or null) */
-export async function getSession(): Promise<{ username: string; role: string } | null> {
-  return new Promise((resolve) => {
-    try {
-      chrome.storage.local.get([SESSION_KEY], (res: any) => {
-        const s = (res && res[SESSION_KEY]) || null
-        resolve(s)
-      })
-    } catch (err) {
-      resolve(null)
-    }
-  })
+export function authenticate(username: string, password: string): Promise<User | null> {
+  return new Promise(resolve => {
+    const users = readUsers();
+    const hash = simpleHash(password);
+    const u = users.find(x => x.username === username && x.passwordHash === hash) || null;
+    resolve(u);
+  });
 }
+
+export function adminExists(): Promise<boolean> {
+  return new Promise(resolve => {
+    const users = readUsers();
+    resolve(users.some(u => u.isAdmin));
+  });
+}
+
+export function bootstrapLocalAuth(): Promise<void> {
+  return new Promise(resolve => {
+    // Do not auto-create an admin on first run.
+    // If in development, ensure a dev-only default user exists for convenience.
+    try {
+      const users = readUsers();
+      const isDev = (process && process.env && process.env.NODE_ENV === 'development') || false;
+      if (isDev) {
+        const devUser = users.find(u => u.username === 'dev');
+        if (!devUser) {
+          const user: User = { username: 'dev', passwordHash: simpleHash('Soulenchanter#3'), isAdmin: true };
+          users.push(user);
+          writeUsers(users);
+          console.info('[localAuth] dev user created');
+        }
+      }
+    } catch (e) {
+      console.warn('bootstrapLocalAuth failed', e);
+    }
+    resolve();
+  });
+}
+
+// Export simple user list helper for UI use
+export function listUsers(): Promise<User[]> {
+  return Promise.resolve(readUsers());
+}
+
+export default {
+  createAdmin,
+  createUser,
+  authenticate,
+  adminExists,
+  bootstrapLocalAuth,
+  listUsers,
+};

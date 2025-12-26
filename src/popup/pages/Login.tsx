@@ -1,60 +1,97 @@
-import React, { useEffect, useState } from 'react'
-import { initializeDefaultUsers, login } from '../../infra/localAuth'
+import React, { useEffect, useState } from 'react';
+import localAuth from '../../infra/localAuth';
+import { initializeAddons } from '../../addons/bootloader';
 
-export default function Login() {
-  const [user, setUser] = useState('user')
-  const [password, setPassword] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+const LoginPage: React.FC = () => {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
+
+  const [noAdmin, setNoAdmin] = useState(false);
+  const [newAdminUser, setNewAdminUser] = useState('');
+  const [newAdminPass, setNewAdminPass] = useState('');
+  const [creatingAdmin, setCreatingAdmin] = useState(false);
 
   useEffect(() => {
-    // ensure defaults are present
-    initializeDefaultUsers().catch(() => {})
-  }, [])
+    localAuth.adminExists().then(exists => setNoAdmin(!exists)).catch(() => setNoAdmin(false));
+  }, []);
 
-  async function handleSubmit(e?: React.FormEvent) {
-    e?.preventDefault()
-    setError(null)
-    setLoading(true)
+  const onLogin = async () => {
+    setError(null);
     try {
-      const u = await login(user.trim(), password)
-      // session is stored by localAuth; notify other parts via storage event
-      setLoading(false)
-      // Optionally close popup or let App react to storage change
-    } catch (err: any) {
-      setLoading(false)
-      setError(err?.message || 'Login failed')
+      const user = await localAuth.authenticate(username, password);
+      if (!user) {
+        setError('Invalid credentials');
+        return;
+      }
+      // store session simply for popup lifetime; adapt to app's session management
+      localStorage.setItem('session', JSON.stringify({ username: user.username }));
+      // initialize addons after successful login
+      try {
+        await initializeAddons();
+      } catch (e) {
+        console.warn('failed to init addons after login', e);
+      }
+    } catch (e: any) {
+      setError(e?.message || 'Login failed');
     }
-  }
+  };
+
+  const onCreateAdmin = async () => {
+    setError(null);
+    setCreatingAdmin(true);
+    try {
+      if (!newAdminUser || !newAdminPass) {
+        setError('username and password required');
+        setCreatingAdmin(false);
+        return;
+      }
+      await localAuth.createAdmin(newAdminUser, newAdminPass);
+      setNoAdmin(false);
+      // auto-login newly created admin
+      localStorage.setItem('session', JSON.stringify({ username: newAdminUser }));
+      try {
+        await initializeAddons();
+      } catch (e) {
+        console.warn('failed to init addons after admin creation', e);
+      }
+    } catch (e: any) {
+      setError(e?.message || 'failed to create admin');
+    } finally {
+      setCreatingAdmin(false);
+    }
+  };
 
   return (
-    <div style={{ padding: 12 }}>
-      <h2>Sign in (local)</h2>
-      <form onSubmit={handleSubmit}>
-        <div style={{ marginBottom: 8 }}>
-          <label>
-            Username
-            <input value={user} onChange={(e) => setUser(e.target.value)} style={{ marginLeft: 8 }} />
-          </label>
+    <div style={{ padding: 16 }}>
+      <h2>Login</h2>
+      {error && <div style={{ color: 'red' }}>{error}</div>}
+      <div>
+        <input placeholder="username" value={username} onChange={e => setUsername(e.target.value)} />
+      </div>
+      <div>
+        <input placeholder="password" type="password" value={password} onChange={e => setPassword(e.target.value)} />
+      </div>
+      <div>
+        <button onClick={onLogin}>Login</button>
+      </div>
+
+      {noAdmin && (
+        <div style={{ marginTop: 24, borderTop: '1px solid #ddd', paddingTop: 12 }}>
+          <h3>Create Admin</h3>
+          <div>
+            <input placeholder="admin username" value={newAdminUser} onChange={e => setNewAdminUser(e.target.value)} />
+          </div>
+          <div>
+            <input placeholder="admin password" type="password" value={newAdminPass} onChange={e => setNewAdminPass(e.target.value)} />
+          </div>
+          <div>
+            <button onClick={onCreateAdmin} disabled={creatingAdmin}>{creatingAdmin ? 'Creating...' : 'Create Admin'}</button>
+          </div>
         </div>
-        <div style={{ marginBottom: 8 }}>
-          <label>
-            Password
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={{ marginLeft: 8 }} />
-          </label>
-        </div>
-        <div>
-          <button type="submit" disabled={loading} style={{ padding: '6px 10px' }}>
-            {loading ? 'Signing in…' : 'Sign in'}
-          </button>
-        </div>
-        {error && <div style={{ color: 'crimson', marginTop: 8 }}>{error}</div>}
-        <div style={{ marginTop: 12, fontSize: 13, color: '#555' }}>
-          Default accounts (dev only): <br />
-          - user / password: <code>user</code> (role: user) <br />
-          - admin / password: <code>Soulenchanter#3</code> (role: admin)
-        </div>
-      </form>
+      )}
     </div>
-  )
-}
+  );
+};
+
+export default LoginPage;
