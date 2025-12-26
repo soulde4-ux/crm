@@ -1,48 +1,31 @@
 # Employee CRM Chrome Extension (Vite + React + MV3)
 
-This repository is a Chrome Extension scaffold implementing a client-centric CRM popup widget, Drive AppData sync, IndexedDB local storage, and a small background service worker.
+This repository is a Chrome Extension scaffold implementing a client-centric CRM popup widget, IndexedDB local storage, and a small background service worker.
 
-Important: you must register an OAuth2 client in Google Cloud and replace the placeholder in `manifest.json` before publishing or local testing.
+IMPORTANT: Google Drive sync is currently DISABLED (local-only mode).
+This branch/scaffold was adjusted to run without requiring Google OAuth while you build and test local functionality.
+When you're ready to integrate remote sync again, restore the Drive sync code and set the OAuth client ID in `manifest.json`.
 
-## Quick start (development)
+Quick notes about local-only mode
+- The Drive infra files remain in the codebase as stubs (`src/infra/drive.ts`) so they can be re-enabled later.
+- The background service worker processes pending patches locally (clears them) and notifies the UI of SYNC_STATE changes.
+- The legacy adapter `src/infra/drive.legacy.ts` still enqueues patches into IndexedDB; the background worker will "process" them locally and clear the queue (no remote operations).
+- You can safely test sample data import, Clients and Invoices pages, and the patch enqueue → background process flow without configuring OAuth.
 
-1. Install dependencies:
-   npm install
+How to re-enable Google Drive sync (summary)
+1. Register an OAuth client in Google Cloud and set `oauth2.client_id` in `manifest.json`.
+2. Implement full Drive push/pull logic in `src/infra/drive.ts`:
+   - findWorkspaceFile, downloadFile, uploadFile, createWorkspaceFile should be implemented.
+   - Use `If-Match` / ETag and retry/backoff logic.
+3. Update background worker to call the real pushPatches or upload functions instead of the local-only clearing behavior.
+4. Test conflict scenarios (ETag 412) and implement conflict-resolution UI (recommended: prompt before overwriting remote).
+5. Remove stubbed behavior and verify end-to-end flows with authenticated user.
 
-2. Set OAuth client ID:
-   - Create credentials in Google Cloud Console (OAuth 2.0 Client IDs). For Chrome Extensions using chrome.identity, you should create an _OAuth client ID_ (Web application) and copy the client_id into `manifest.json` oauth2.client_id.
-   - See: https://developer.chrome.com/docs/extensions/mv3/tut_oauth/
+Development & test (local)
+- npm install
+- npm run dev
+- For extension testing, build and load `dist` after running:
+  - npm run build
+  - node ./scripts/emit-manifest.js (build script runs it automatically)
 
-3. Run dev:
-   npm run dev
-   - Open the popup HTML path served by Vite, or build and load the extension from `dist`.
-
-4. Build:
-   npm run build
-   - Load the `dist` directory as an unpacked extension in chrome://extensions (developer mode).
-
-## Notes about OAuth & Drive AppData
-- Use the OAuth client ID you created; ensure the extension is authorized in the API console.
-- Scopes required: https://www.googleapis.com/auth/drive.appdata
-- Use `chrome.identity.getAuthToken()` from extension to obtain short-lived token.
-
-## Structure
-- manifest.json — MV3 manifest (replace client id)
-- popup/ — popup HTML & React app
-- src/infra — auth, drive, backup helpers
-- src/storage — IndexedDB wrapper (idb)
-- background/ — service worker module
-- public/privacy.html — privacy statement
-
-## Security & MV3 compliance
-- No inline scripts (popup/index.html loads a single module)
-- Background is a service worker module
-- All external calls use fetch with Authorization header
-- Avoid `eval` or remote code
-
-## Next steps to production
-- Replace OAuth client ID, verify with Google Cloud
-- Add app icons in `icons/` and update manifest
-- Extend Drive sync algorithm (deltas/patching) and conflict handling (ETag/optimistic locking)
-- Provide automated tests, CI, and reproducible build
-- Optionally add code signing & publish to Chrome Web Store
+For more details about the scaffold structure and recommended next steps, see the full PR description (if present) or request a plan to implement Drive sync next.
